@@ -41,8 +41,8 @@ class BondingSocksServer(
 ) {
 
     companion object {
-        /** 127.0.0.1-only; picked to avoid AetherUpstream's own 1819 and any other local port. */
-        const val PORT = 12347
+        /** 127.0.0.1-only; matches TunnelConfig.SOCKS_PORT so Aether's PortProbe.awaitOpen succeeds. */
+        const val PORT = 1819
         private const val CONNECT_TIMEOUT_MS = 5000
         // Bounds how long a TCP relay direction blocks with no data at all after the
         // connection is established - separate from CONNECT_TIMEOUT_MS.
