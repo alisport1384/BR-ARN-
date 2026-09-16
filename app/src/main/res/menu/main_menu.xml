@@ -13,4 +13,9 @@
         android:title="ذخیره لاگ..."
         app:showAsAction="never" />
 
+    <item
+        android:id="@+id/action_virtual_bonding_sandbox"
+        android:title="Virtual Bonding Sandbox"
+        app:showAsAction="never" />
+
 </menu>
