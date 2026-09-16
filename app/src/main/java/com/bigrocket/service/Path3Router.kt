@@ -43,6 +43,31 @@ class Path3Router {
         return wifi ?: cellular
     }
 
+    /**
+     * Returns all available networks ordered by weight descending (best first).
+     * Used for fallback when the primary network fails to connect - ensures
+     * registration traffic (api.cloudflareclient.com) can still succeed via the
+     * other path instead of failing outright.
+     *
+     * FIX for WireGuard/Gool SOCKS5 readiness: previously only pickBestNetwork()
+     * was tried; if that network resolved api.cloudflareclient.com to IPv6 that
+     * was unreachable, the whole registration failed and PortProbe timed out
+     * with "socks5 listener did not become ready". Now we try all networks.
+     */
+    fun allNetworksSorted(): List<Network> {
+        val wifi = wifiNetwork
+        val cellular = cellularNetwork
+        return when {
+            wifi != null && cellular != null -> {
+                if (wifiWeight >= cellularWeight) listOf(wifi, cellular)
+                else listOf(cellular, wifi)
+            }
+            wifi != null -> listOf(wifi)
+            cellular != null -> listOf(cellular)
+            else -> emptyList()
+        }
+    }
+
     fun latencyMs(wifiLatencyMs: Long, cellularLatencyMs: Long): Long {
         val wifi = wifiNetwork != null && wifiWeight > 0
         val cellular = cellularNetwork != null && cellularWeight > 0

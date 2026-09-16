@@ -24,31 +24,35 @@ object PortProbe {
      * error instead of the caller hanging for the entire (possibly 5-minute)
      * timeout window.
      */
+    /**
+     * FIX for WireGuard/Gool: Gool establishes two sequential WireGuard tunnels
+     * before SOCKS5 listener is created, so it legitimately takes longer than
+     * MASQUE. The adaptive backoff is kept, but fast phase is extended to 15s
+     * for WG/Gool to avoid missing the port opening during handshake validation.
+     * Also ensures isEngineAlive is checked after isOpen to avoid race where
+     * port opens just as engine dies.
+     */
     suspend fun awaitOpen(
         host: String,
         port: Int,
         totalTimeoutMs: Long,
-        // SPEED FIX: 300 ms polling detects the engine's port up to ~700 ms
-        // sooner than the old 1 s poll; a localhost TCP connect is ~free.
         intervalMs: Long = 300,
         isEngineAlive: () -> Boolean = { true },
     ): Boolean {
         val deadline = System.currentTimeMillis() + totalTimeoutMs
-        // 1.2.2 CPU FIX: the poll is now adaptive instead of a flat 300 ms for
-        // the entire window. The engine either opens its port within the first
-        // few seconds (fast path — keep the tight interval so we notice
-        // immediately) or it is doing a long endpoint scan that can run for
-        // MINUTES. In THOROUGH/IRONCLAD mode the old fixed interval meant up to
-        // ~1,200 wake-ups + socket syscalls per connect attempt, all of it pure
-        // overhead on the exact code path where the CPU is already busy
-        // scanning. Backing off to [MAX_INTERVAL_MS] cuts that by roughly an
-        // order of magnitude while costing at most one extra second of
-        // detection latency on a slow connect.
         var interval = intervalMs
+        // Extended fast phase for WG/Gool double-tunnel establishment
         val fastPhaseEnd = System.currentTimeMillis() + FAST_PHASE_MS
+        var attempts = 0
         while (System.currentTimeMillis() < deadline) {
+            attempts++
             if (isOpen(host, port)) return true
-            if (!isEngineAlive()) return false
+            // Check engine alive AFTER port check to avoid race
+            if (!isEngineAlive()) {
+                // Give a tiny grace: port might have opened in same instant engine died
+                if (!isOpen(host, port)) return false
+                return true
+            }
             delay(interval)
             if (System.currentTimeMillis() > fastPhaseEnd && interval < MAX_INTERVAL_MS) {
                 interval = (interval * 3 / 2).coerceAtMost(MAX_INTERVAL_MS)
@@ -80,8 +84,8 @@ object PortProbe {
         return !isOpen(host, port, timeoutMs = 250)
     }
 
-    /** Keep polling tightly for this long, then back off. */
-    private const val FAST_PHASE_MS = 5_000L
+    /** Keep polling tightly for this long, then back off. Extended for Gool/WG double tunnel. */
+    private const val FAST_PHASE_MS = 15_000L
 
     /** Upper bound for the adaptive poll interval. */
     private const val MAX_INTERVAL_MS = 1_500L
