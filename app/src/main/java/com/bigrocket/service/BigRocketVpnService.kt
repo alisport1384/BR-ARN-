@@ -666,6 +666,9 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
         DynamicWeightCalculator.clear()
         BondingStatus.reset()
 
+        // Ensure Aether state is properly reset when VPN stops
+        EmbeddedAetherRuntime.stop(applicationContext)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
