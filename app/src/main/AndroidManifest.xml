@@ -30,6 +30,11 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.VirtualBondingSandboxActivity"
+            android:label="Virtual Bonding Sandbox"
+            android:exported="false" />
+
         <service
             android:name=".service.BigRocketVpnService"
             android:exported="false"
