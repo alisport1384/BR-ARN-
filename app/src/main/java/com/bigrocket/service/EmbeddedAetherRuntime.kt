@@ -66,10 +66,17 @@ object EmbeddedAetherRuntime {
                     studio.cluvex.aether.model.Protocol.WIREGUARD -> baseTimeout.coerceAtLeast(60_000L)
                     else -> baseTimeout.coerceAtLeast(10_000L)
                 }
-                AppLogger.log("Aether", "awaiting SOCKS5 ${TunnelConfig.SOCKS_HOST}:${TunnelConfig.SOCKS_PORT} timeout=${startupTimeoutMs}ms proto=${embeddedProfile.protocol}")
+                // Extract the actual SOCKS5 port from the profile's upstreamProxy
+                // (e.g., "socks5://127.0.0.1:12347" -> 12347)
+                val actualSocksPort = embeddedProfile.upstreamProxy
+                    .replace("socks5://", "")
+                    .split(":")
+                    .last()
+                    .toInt()
+                AppLogger.log("Aether", "awaiting SOCKS5 ${TunnelConfig.SOCKS_HOST}:${actualSocksPort} timeout=${startupTimeoutMs}ms proto=${embeddedProfile.protocol}")
                 val open = PortProbe.awaitOpen(
                     TunnelConfig.SOCKS_HOST,
-                    TunnelConfig.SOCKS_PORT,
+                    actualSocksPort,
                     startupTimeoutMs,
                     isEngineAlive = { engine.isAlive() },
                 )
@@ -82,11 +89,11 @@ object EmbeddedAetherRuntime {
                 AetherController.setIpLoading(true)
                 val ip = NetProbe.fetchIpInfoViaSocks(
                     TunnelConfig.SOCKS_HOST,
-                    TunnelConfig.SOCKS_PORT,
+                    actualSocksPort,
                 )
                 AetherController.setIpInfo(ip?.let { studio.cluvex.aether.core.IpEndpoint(it.ip, it.countryCode, true) })
                 AetherController.setIpLoading(false)
-                AetherController.setState(ConnectionState.Connected("${TunnelConfig.SOCKS_HOST}:${TunnelConfig.SOCKS_PORT}"))
+                AetherController.setState(ConnectionState.Connected("${TunnelConfig.SOCKS_HOST}:${actualSocksPort}"))
                 _trafficReady.value = true
             }.onFailure {
                 AetherController.setState(ConnectionState.Error(it.message ?: "Aether connection failed"))
