@@ -20,6 +20,10 @@ class Path3Router {
         cellularNetwork = cellular
     }
 
+    /** Read-only snapshot for external observers (e.g. the Virtual Bonding sandbox UI). */
+    fun currentWifiNetwork(): Network? = wifiNetwork
+    fun currentCellularNetwork(): Network? = cellularNetwork
+
     fun updateWeights(wifi: Int, cellular: Int) {
         wifiWeight = wifi.coerceIn(0, 100)
         cellularWeight = cellular.coerceIn(0, 100)
