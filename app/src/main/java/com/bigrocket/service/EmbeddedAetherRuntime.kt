@@ -57,16 +57,16 @@ object EmbeddedAetherRuntime {
                 // startup budget here instead of failing while the inner tunnel
                 // is still legitimately being established.
                 val startupTimeoutMs = embeddedProfile.connectTimeoutMs().coerceAtLeast(10_000L)
-                // Extract the actual SOCKS5 port from the profile's upstreamProxy
-                // (e.g., "socks5://127.0.0.1:12347" -> 12347)
-                val actualSocksPort = embeddedProfile.upstreamProxy
-                    .replace("socks5://", "")
-                    .split(":")
-                    .last()
-                    .toInt()
+                // NOTE: embeddedProfile.upstreamProxy ("socks5://127.0.0.1:${BondingSocksServer.PORT}")
+                // is where Aether sends ITS OWN outbound traffic (the --upstream target).
+                // It is unrelated to the port Aether exposes ITS OWN SOCKS5 relay on for us
+                // to consume — that is always the fixed TunnelConfig.SOCKS_PORT (1819).
+                // Probing BondingSocksServer's port here always returns "open" immediately
+                // (it's up from VPN start), which made every protocol falsely report
+                // Connected before Aether's tunnel was actually ready.
                 val open = PortProbe.awaitOpen(
                     TunnelConfig.SOCKS_HOST,
-                    actualSocksPort,
+                    TunnelConfig.SOCKS_PORT,
                     startupTimeoutMs,
                     isEngineAlive = { engine.isAlive() },
                 )
@@ -75,11 +75,11 @@ object EmbeddedAetherRuntime {
                 AetherController.setIpLoading(true)
                 val ip = NetProbe.fetchIpInfoViaSocks(
                     TunnelConfig.SOCKS_HOST,
-                    actualSocksPort,
+                    TunnelConfig.SOCKS_PORT,
                 )
                 AetherController.setIpInfo(ip?.let { studio.cluvex.aether.core.IpEndpoint(it.ip, it.countryCode, true) })
                 AetherController.setIpLoading(false)
-                AetherController.setState(ConnectionState.Connected("${TunnelConfig.SOCKS_HOST}:${actualSocksPort}"))
+                AetherController.setState(ConnectionState.Connected("${TunnelConfig.SOCKS_HOST}:${TunnelConfig.SOCKS_PORT}"))
                 _trafficReady.value = true
             }.onFailure {
                 AetherController.setState(ConnectionState.Error(it.message ?: "Aether connection failed"))
