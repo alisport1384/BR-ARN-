@@ -43,6 +43,14 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
 
     companion object {
         const val ACTION_STOP = "com.bigrocket.service.STOP"
+
+        // Sandbox-only access point (Section 259/273): lets an on-demand debug UI
+        // (VirtualBondingDebugPanel) reach the live VpnService instance + currently
+        // discovered Wi-Fi/Cellular Networks for protect()/bindSocket() during a
+        // manual Virtual Bonding sandbox run. Never read from the real traffic path -
+        // TunPacketRouter/Path3Router continue to own that entirely.
+        @Volatile var runningInstance: BigRocketVpnService? = null
+            private set
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "bigrocket_vpn_channel"
         private const val WEIGHT_UPDATE_INTERVAL_MS = 1000L
@@ -123,6 +131,7 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
         super.onCreate()
         AppLogger.init(this)
         AppLogger.log("VpnService", "onCreate()")
+        runningInstance = this
         createNotificationChannel()
 
         // Apply the active embedded proxy's readiness to the router the moment it changes,
@@ -679,10 +688,15 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     }
 
     override fun onDestroy() {
+        if (runningInstance === this) runningInstance = null
         stopVpn()
         serviceScope.cancel()
         super.onDestroy()
     }
+
+    /** Sandbox-only accessors - see [runningInstance]. */
+    fun sandboxWifiNetwork() = path3Router.currentWifiNetwork()
+    fun sandboxCellularNetwork() = path3Router.currentCellularNetwork()
 
     /**
      * Called by the system - not our own app - when the VPN is torn down from outside this
