@@ -1,0 +1,358 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/aether_background">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/toolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        android:background="@color/aether_background"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:popupTheme="@style/ThemeOverlay.AppCompat.Light"
+        app:title="BigRocket" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@color/aether_background"
+        android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="20dp"
+        android:paddingTop="28dp"
+        android:paddingEnd="20dp"
+        android:paddingBottom="28dp">
+
+        <!-- Header -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.02"
+            android:text="BigRocket"
+            android:textColor="@color/br_text_primary"
+            android:textSize="26sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="20dp"
+            android:text="اتصال ترکیبی هوشمند Wi-Fi و دیتای همراه"
+            android:textColor="@color/br_text_muted"
+            android:textSize="13sp" />
+
+        <!-- Network status card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_br_card"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="وضعیت شبکه"
+                android:textColor="@color/br_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tvWifiStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Wi-Fi: در حال بررسی..."
+                android:textColor="@color/br_text_primary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/tvCellularStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="Cellular: در حال بررسی..."
+                android:textColor="@color/br_text_primary"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/tvPath3Status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="مسیر ۳: قطع"
+                android:textColor="@color/br_accent_cyan"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="امتیاز اعتبار مسیر"
+                android:textColor="@color/br_text_muted"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Wi-Fi"
+                    android:textColor="@color/br_text_primary"
+                    android:textSize="14sp" />
+
+                <Spinner
+                    android:id="@+id/spinnerWifiScore"
+                    android:layout_width="100dp"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_br_subsurface"
+                    android:padding="4dp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Cellular"
+                    android:textColor="@color/br_text_primary"
+                    android:textSize="14sp" />
+
+                <Spinner
+                    android:id="@+id/spinnerCellularScore"
+                    android:layout_width="100dp"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_br_subsurface"
+                    android:padding="4dp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- AI decision engine card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_br_card"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="موتور تصمیم‌گیری"
+                android:textColor="@color/br_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tvAiStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="وضعیت AI: IDLE"
+                android:textColor="@color/br_accent_cyan"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvAiLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_br_subsurface"
+                android:fontFamily="monospace"
+                android:padding="12dp"
+                android:text="لاگ زنده هوش مصنوعی..."
+                android:textColor="@color/br_accent_mint"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <!-- Performance card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_br_card"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="عملکرد"
+                android:textColor="@color/br_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tvMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="مود سیستم: Single-Path"
+                android:textColor="@color/br_text_primary"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tvSpeed"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="سرعت ترکیبی: 0.0 Mbps"
+                android:textColor="@color/br_text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <!-- Simple, cheap-to-render split bar: shows the live Wi-Fi vs Cellular
+                 routing share. Plain weighted views only, no custom drawing - updated
+                 by changing layout_weight. -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="10dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_br_subsurface"
+                android:clipToOutline="true"
+                android:orientation="horizontal">
+
+                <View
+                    android:id="@+id/barWifi"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@color/br_wifi_bar" />
+
+                <View
+                    android:id="@+id/barCellular"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:background="@color/br_cellular_bar" />
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tvBarLegend"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Wi-Fi 0% · Cellular 0%"
+                android:textColor="@color/br_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="روند سرعت (Mbps)"
+                android:textColor="@color/br_text_muted"
+                android:textSize="12sp" />
+
+            <com.bigrocket.ui.SimpleLineChartView
+                android:id="@+id/chartThroughput"
+                android:layout_width="match_parent"
+                android:layout_height="100dp"
+                android:layout_marginTop="6dp" />
+        </LinearLayout>
+
+        <!-- Connection card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_br_card"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:id="@+id/tvVpnStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="14dp"
+                android:text="وضعیت VPN: غیرفعال"
+                android:textColor="@color/br_text_primary"
+                android:textSize="15sp" />
+
+            <Button
+                android:id="@+id/btnToggleVpn"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_br_button"
+                android:elevation="0dp"
+                android:fontFamily="sans-serif-medium"
+                android:foreground="?android:attr/selectableItemBackground"
+                android:letterSpacing="0.01"
+                android:stateListAnimator="@null"
+                android:text="شروع اتصال VPN"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <!-- Advanced routing card -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:background="@drawable/bg_br_card"
+            android:orientation="vertical"
+            android:padding="18dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="10dp"
+                android:fontFamily="sans-serif-medium"
+                android:text="مسیر پیشرفته"
+                android:textColor="@color/br_text_muted"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/tvAetherMode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="مسیر بعد از Bonding: فقط BigRocket"
+                android:textColor="@color/br_text_primary"
+                android:textSize="14sp" />
+
+            <Spinner
+                android:id="@+id/spinnerAetherMode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_br_subsurface"
+                android:padding="10dp"
+                android:popupBackground="@drawable/bg_br_card" />
+
+            <androidx.compose.ui.platform.ComposeView
+                android:id="@+id/aetherEmbeddedPanel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp" />
+        </LinearLayout>
+
+    </LinearLayout>
+    </ScrollView>
+</LinearLayout>

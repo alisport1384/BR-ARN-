@@ -1,0 +1,135 @@
+[package]
+name = "aether"
+version = "2.0.0"
+edition = "2021"
+# 1.3.0 CORE 2.0.0 REBASE: upstream raised the floor to 1.98 (arti-client and
+# the 2.0.0 dependency set need it). Taken as-is; the app's CI toolchain is
+# stable, which is >= 1.98.
+rust-version = "1.98"
+authors = ["CluvexStudio"]
+license = "AGPL-3.0-only"
+repository = "https://github.com/CluvexStudio/aether"
+# >>> AETHER-APP-PATCH build-provenance
+# Stamps the APP patch level into the binary. See build.rs for the full reason;
+# short version: r2/r3/r4 were byte-indistinguishable from the outside and a
+# whole field-test round was wasted on a stale engine.
+build = "build.rs"
+# <<< AETHER-APP-PATCH build-provenance
+
+[lib]
+name = "aether"
+path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "aether"
+path = "src/main.rs"
+
+[dependencies]
+quiche = { path = "../quiche/quiche", default-features = false, features = ["boringssl-boring-crate", "qlog"] }
+boring = "4.22"
+foreign-types-shared = "0.3"
+libc = "0.2"
+tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "io-std", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "cookies", "socks"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+base64 = "0.22"
+hex = "0.4"
+rand = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+ring = "0.17"
+octets = { path = "../quiche/octets" }
+log = "0.4"
+env_logger = "0.11"
+thiserror = "2"
+anyhow = "1"
+futures = "0.3"
+# ============================================================================
+# 1.2.8-r4 ROOT CAUSE: this feature list contained NO congestion-control
+# algorithm.
+#
+# `default-features = false` switches off smoltcp's defaults, and
+# `socket-tcp-cubic` is one of them. smoltcp's `AnyController::new()` then
+# resolves to `NoControl`: the netstack's TCP sender runs with **no congestion
+# window at all** - no slow start, no AIMD, no backoff on loss. It emits as fast
+# as the peer's advertised window allows, forever.
+#
+# Every byte this device uploads through the VPN goes through that sender. On a
+# link that can absorb it nothing shows. On an Iranian mobile path, or a chained
+# Aether -> Psiphon session, it self-destructs:
+#
+#   send at line rate -> bottleneck queue fills -> RTT climbs -> loss
+#     -> smoltcp retransmits WITHOUT reducing anything (there is nothing to
+#        reduce) -> more queue, more loss -> `flush_tx` tail-drops at
+#        MAX_TX_RETAINED -> those drops are invisible to a controller that does
+#        not exist, so they are retransmitted too
+#     -> collapse, held indefinitely, because nothing in the loop ever backs off.
+#
+# That is the whole report, and it is why five rounds of fixes changed nothing:
+# r2 fixed queue starvation, r3 fixed a lock hand-off and a watchdog, and neither
+# mattered, because the sender driving the pipe was never throttled at all. It
+# also explains every asymmetry in the report, exactly:
+#
+#   * live dubbing dies in the first second - it is a SUSTAINED upload (~44 KB/s
+#     of PCM). Almost nothing else the phone does uploads continuously.
+#   * plain download looks "fine" - that direction is paced by the REMOTE
+#     server's congestion control, which is a real one.
+#   * YouTube spikes - a player's request/ACK path uploads in bursts.
+#   * "press stop and the ping comes back gradually" - the standing queue drains
+#     at link rate once the sender stops. Nothing had died; nothing had to
+#     recover. No error was logged because nothing was, technically, wrong.
+#   * ANOTHER VPN HAS NO PROBLEM AT ALL - other VPNs forward packets and leave
+#     congestion control to the phone's own kernel TCP stack (CUBIC/BBR). Aether
+#     TERMINATES TCP inside smoltcp, so it owns that job, and it was not doing it.
+#
+# `socket-tcp-cubic` is added here AND selected explicitly per socket in
+# `netstack.rs` (`set_congestion_control`), so a future feature-list edit cannot
+# silently switch it back off: without the feature the enum variant does not
+# exist and the build fails loudly instead of shipping this bug again.
+#
+# 1.2.9 CORE 1.9.0 REBASE - why the version stays at 0.12 while upstream moved
+# to 0.14. Upstream 1.9.0 bumped smoltcp to 0.14 AND kept its feature list
+# without a congestion-control algorithm, i.e. exactly the r4 root cause above.
+# Taking that line would have done two separate things at once: revert the
+# congestion controller, and move the app's own 2600-line netstack (which is an
+# app patch in full, written against the 0.12 socket API) onto a new major
+# release of the crate that terminates every TCP flow on the device. The engine
+# upgrade for 1.2.9 was required to leave download speed and connect behaviour
+# exactly as 1.2.8 tuned them, so the pin stays and the CUBIC feature stays with
+# it. A 0.14 rebase is a data-plane change of its own and belongs in a release
+# that can be field-tested as one.
+# ============================================================================
+# >>> AETHER-APP-PATCH netstack-congestion-control
+smoltcp = { version = "0.12", default-features = false, features = ["std", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp", "socket-tcp-cubic"] }
+# <<< AETHER-APP-PATCH netstack-congestion-control
+boringtun = "0.7"
+x25519-dalek = "2.0.1"
+blake2 = "0.10"
+chacha20poly1305 = "0.10"
+regex = "1"
+ipnet = "2"
+parking_lot = "0.12"
+socket2 = { version = "0.6.4", features = ["all"] }
+h2 = "0.4.15"
+http = "1"
+bytes = "1"
+tokio-boring = "4.22"
+arti-client = { version = "0.46", default-features = false, features = ["tokio", "rustls", "compression", "static-sqlite", "bridge-client", "pt-client"], optional = true }
+tor-chanmgr = { version = "0.46", optional = true }
+tor-rtcompat = { version = "0.46", default-features = false, features = ["tokio", "rustls"], optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
+liblzma = { version = "0.4", features = ["static"], optional = true }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"], optional = true }
+
+[features]
+default = []
+tor = ["dep:arti-client", "dep:tor-chanmgr", "dep:tor-rtcompat", "dep:tokio-util", "dep:liblzma", "dep:tracing-subscriber"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "unwind"
+strip = true

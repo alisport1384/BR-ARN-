@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="aether_background">#0A0E1A</color>
+    <color name="aether_surface">#0F1626</color>
+    <color name="aether_primary">#4C8DFF</color>
+    <color name="black">#000000</color>
+    <color name="white">#FFFFFF</color>
+
+    <!-- Reused from studio.cluvex.aether.ui.theme.Color.kt so BigRocket's own screen
+         (plain View/XML, not Compose) matches Aether's panel pixel-for-pixel instead of
+         inventing a second, slightly-different palette. -->
+    <color name="br_card_surface">#16203A</color>
+    <color name="br_card_surface_alt">#151E33</color>
+    <color name="br_text_primary">#E8EEF7</color>
+    <color name="br_text_muted">#8B98B0</color>
+    <color name="br_text_dim">#5E6B84</color>
+    <color name="br_accent_cyan">#32E0C4</color>
+    <color name="br_accent_mint">#3EDBB0</color>
+    <color name="br_accent_error">#FF5C7A</color>
+    <color name="br_wifi_bar">#4C8DFF</color>
+    <color name="br_cellular_bar">#32E0C4</color>
+</resources>
