@@ -445,6 +445,10 @@ class MainActivity : AppCompatActivity() {
                 saveLogLauncher.launch("bigrocket_log_$timestamp.txt")
                 true
             }
+            R.id.action_virtual_bonding_sandbox -> {
+                startActivity(Intent(this, VirtualBondingSandboxActivity::class.java))
+                true
+            }
             else -> super.onOptionsItemSelected(item)
         }
     }
