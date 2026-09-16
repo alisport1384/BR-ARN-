@@ -56,16 +56,7 @@ object EmbeddedAetherRuntime {
                 // native SOCKS5 listener is created. Use the protocol's full
                 // startup budget here instead of failing while the inner tunnel
                 // is still legitimately being established.
-                // FIX for WG/Gool: ensure sufficient budget for double WireGuard handshake (Gool)
-                // and for registration retries when BondingSocksServer needs fallback from IPv6 to IPv4.
-                // connectTimeoutMs already returns 60s-360s based on scanMode, but we enforce at least 30s
-                // for WG/Gool which have heavier startup (two tunnels).
-                val baseTimeout = embeddedProfile.connectTimeoutMs()
-                val startupTimeoutMs = when (embeddedProfile.protocol) {
-                    studio.cluvex.aether.model.Protocol.GOOL,
-                    studio.cluvex.aether.model.Protocol.WIREGUARD -> baseTimeout.coerceAtLeast(60_000L)
-                    else -> baseTimeout.coerceAtLeast(10_000L)
-                }
+                val startupTimeoutMs = embeddedProfile.connectTimeoutMs().coerceAtLeast(10_000L)
                 // Extract the actual SOCKS5 port from the profile's upstreamProxy
                 // (e.g., "socks5://127.0.0.1:12347" -> 12347)
                 val actualSocksPort = embeddedProfile.upstreamProxy
@@ -73,18 +64,13 @@ object EmbeddedAetherRuntime {
                     .split(":")
                     .last()
                     .toInt()
-                AppLogger.log("Aether", "awaiting SOCKS5 ${TunnelConfig.SOCKS_HOST}:${actualSocksPort} timeout=${startupTimeoutMs}ms proto=${embeddedProfile.protocol}")
                 val open = PortProbe.awaitOpen(
                     TunnelConfig.SOCKS_HOST,
                     actualSocksPort,
                     startupTimeoutMs,
                     isEngineAlive = { engine.isAlive() },
                 )
-                if (!open) {
-                    val alive = engine.isAlive()
-                    AppLogger.log("Aether", "SOCKS5 listener not ready after ${startupTimeoutMs}ms, engineAlive=$alive")
-                    error("Aether SOCKS5 listener did not become ready")
-                }
+                if (!open) error("Aether SOCKS5 listener did not become ready")
                 AetherController.setState(ConnectionState.Verifying)
                 AetherController.setIpLoading(true)
                 val ip = NetProbe.fetchIpInfoViaSocks(
