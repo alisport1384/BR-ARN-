@@ -30,6 +30,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Standalone test only (see NetworkBindTestActivity's own doc comment).
+             Not reachable from any menu/UI; launch via `adb shell am start -n
+             com.bigrocket/com.bigrocket.experiment.NetworkBindTestActivity`.
+             Touches nothing else in the app. -->
+        <activity
+            android:name=".experiment.NetworkBindTestActivity"
+            android:label="Network Bind Test"
+            android:exported="false" />
+
         <activity
             android:name=".ui.VirtualBondingSandboxActivity"
             android:label="Virtual Bonding Sandbox"
