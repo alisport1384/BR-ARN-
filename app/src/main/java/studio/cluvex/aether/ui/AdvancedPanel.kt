@@ -769,6 +769,7 @@ private fun protocolLabel(protocol: Protocol): String = when (protocol) {
     Protocol.MASQUE -> stringResource(R.string.protocol_masque)
     Protocol.WIREGUARD -> stringResource(R.string.protocol_wireguard)
     Protocol.GOOL -> stringResource(R.string.protocol_gool)
+    Protocol.MIM -> stringResource(R.string.protocol_mim)
 }
 
 @Composable
