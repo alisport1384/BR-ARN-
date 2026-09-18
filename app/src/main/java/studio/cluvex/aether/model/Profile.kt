@@ -2,7 +2,7 @@ package studio.cluvex.aether.model
 
 
 /** Transport protocol, mapped 1:1 to the desktop app's CLI flags. */
-enum class Protocol { AUTO, MASQUE, WIREGUARD, GOOL }
+enum class Protocol { AUTO, MASQUE, WIREGUARD, GOOL, MIM }
 
 /** Endpoint scanning strategy. IRONCLAD added in engine v1.3.0. */
 enum class ScanMode { TURBO, BALANCED, THOROUGH, STEALTH, IRONCLAD }
@@ -225,6 +225,9 @@ data class ConnectionProfile(
             Protocol.MASQUE -> args += "--masque"
             Protocol.WIREGUARD -> args += "--wg"
             Protocol.GOOL -> args += "--gool"
+            // MIM = MASQUE-in-MASQUE, new in engine core 2.0.0: two nested MASQUE
+            // hops (the MASQUE counterpart to GOOL's two nested WireGuard hops).
+            Protocol.MIM -> args += "--mim"
         }
 
         // A pinned peer makes scan mode irrelevant, so only emit it otherwise.
