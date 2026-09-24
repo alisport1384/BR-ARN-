@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.Network
@@ -12,6 +13,8 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.os.Process
+import com.bigrocket.ui.MainActivity
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +46,20 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
 
     companion object {
         const val ACTION_STOP = "com.bigrocket.service.STOP"
+        // New: lets the notification (or anything outside the app) request a
+        // stop+start cycle without the user having to open the app first.
+        const val ACTION_RESET = "com.bigrocket.service.RESET"
+
+        // Watchdog: worst-case time we let a single controlMutex-guarded start/
+        // stop/reset operation run before treating the process as unrecoverable.
+        // NOT a fix for the freeze itself - a safety net. Several calls this
+        // section reaches (native TUN read in TunPacketRouter, native engine
+        // process teardown in AetherProcess) are plain blocking calls that
+        // coroutine cancellation cannot preempt (see applyUpstreamMode's and
+        // AetherProcess.stop()'s own comments on this), so if one of them ever
+        // truly hangs, controlMutex itself stays held forever and no amount of
+        // in-process cancellation can recover it - only killing the process can.
+        private const val CONTROL_OP_WATCHDOG_MS = 15_000L
 
         // Sandbox-only access point (Section 259/273): lets an on-demand debug UI
         // (VirtualBondingDebugPanel) reach the live VpnService instance + currently
@@ -127,17 +144,75 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     // versa) can't race on the fields above.
     private val controlMutex = Mutex()
 
+    // Set right before entering controlMutex.withLock / engineSwitchMutex.withLock,
+    // cleared right after - this is what the watchdog Thread below polls.
+    // @Volatile because it is written from serviceScope (Dispatchers.IO)
+    // coroutines and read from a plain background Thread, not from a coroutine.
+    @Volatile private var controlOpStartedAt: Long = 0L
+    @Volatile private var controlOpLabel: String = ""
+    @Volatile private var engineSwitchStartedAt: Long = 0L
+
     override fun onCreate() {
         super.onCreate()
         AppLogger.init(this)
         AppLogger.log("VpnService", "onCreate()")
         runningInstance = this
         createNotificationChannel()
+        startControlOpWatchdog()
 
         // Apply the active embedded proxy's readiness to the router the moment it changes,
         // instead of only picking it up on the next 4s weight-update tick - so app traffic
         serviceScope.launch {
             EmbeddedAetherRuntime.trafficReady.collectLatest { ready -> applyUpstreamMode(ready) }
+        }
+    }
+
+    /**
+     * Last-resort recovery for a permanently frozen controlMutex (see
+     * CONTROL_OP_WATCHDOG_MS above for why in-process cancellation cannot
+     * always recover it). Deliberately a plain background Thread, not a
+     * coroutine on serviceScope: if the freeze is caused by Dispatchers.IO
+     * itself running out of threads (several leaked blocked reads could do
+     * this over repeated connect/disconnect/protocol-switch cycles), a
+     * watchdog that itself needs a Dispatchers.IO thread to run could starve
+     * right along with everything else it's supposed to catch.
+     *
+     * This does not fix the underlying hang - it guarantees the user is never
+     * stuck for more than ~CONTROL_OP_WATCHDOG_MS instead of indefinitely.
+     * Killing the process is intentional: Android tears the VPN tunnel down
+     * with it, so the system-level VPN state and this service's in-memory
+     * state can never disagree afterward - a targeted in-process reset could
+     * leave exactly that kind of split-brain state behind instead.
+     */
+    private fun startControlOpWatchdog() {
+        Thread({
+            while (true) {
+                Thread.sleep(2_000)
+                val now = System.currentTimeMillis()
+                val stuckControl = controlOpStartedAt != 0L && now - controlOpStartedAt > CONTROL_OP_WATCHDOG_MS
+                val stuckEngineSwitch = engineSwitchStartedAt != 0L && now - engineSwitchStartedAt > CONTROL_OP_WATCHDOG_MS
+                if (stuckControl || stuckEngineSwitch) {
+                    val which = if (stuckControl) "controlMutex ('$controlOpLabel')" else "engineSwitchMutex (applyUpstreamMode)"
+                    AppLogger.logError(
+                        "VpnService",
+                        "$which has not completed in ${CONTROL_OP_WATCHDOG_MS}ms - treating as " +
+                            "stuck, killing process so the user can reconnect instead of staying frozen",
+                        IllegalStateException("control op watchdog timeout"),
+                    )
+                    Process.killProcess(Process.myPid())
+                }
+            }
+        }, "vpn-control-watchdog").apply { isDaemon = true }.start()
+    }
+
+    /** Wraps every controlMutex-guarded start/stop/reset with the watchdog above. */
+    private suspend fun runControlOp(label: String, block: suspend () -> Unit) {
+        controlOpLabel = label
+        controlOpStartedAt = System.currentTimeMillis()
+        try {
+            controlMutex.withLock { block() }
+        } finally {
+            controlOpStartedAt = 0L
         }
     }
 
@@ -161,6 +236,15 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
      * one-off glitches right at connect/mode-switch time.
      */
     private suspend fun applyUpstreamMode(aetherReady: Boolean) = engineSwitchMutex.withLock {
+        engineSwitchStartedAt = System.currentTimeMillis()
+        try {
+            applyUpstreamModeLocked(aetherReady)
+        } finally {
+            engineSwitchStartedAt = 0L
+        }
+    }
+
+    private fun applyUpstreamModeLocked(aetherReady: Boolean) {
         val wantHev = aetherReady && HevTunnel.isAvailable()
         if (wantHev == usingHevEngine) {
             // Same engine as before: for the JVM router this still needs the mode flag
@@ -170,9 +254,9 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
             if (!usingHevEngine) {
                 packetRouter?.setUpstreamMode(if (aetherReady) UpstreamMode.AETHER else UpstreamMode.NONE)
             }
-            return@withLock
+            return
         }
-        val iface = vpnInterface ?: return@withLock
+        val iface = vpnInterface ?: return
 
         if (wantHev) {
             DiagnosticsLog.i("tunnel", "Switching TUN engine: JVM router -> native hev-socks5-tunnel")
@@ -220,14 +304,24 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
         AppLogger.log("VpnService", "onStartCommand action=${intent?.action}")
 
         if (intent?.action == ACTION_STOP) {
-            serviceScope.launch { controlMutex.withLock { stopVpn() } }
+            serviceScope.launch { runControlOp("stop") { stopVpn() } }
             return START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_RESET) {
+            serviceScope.launch {
+                runControlOp("reset") {
+                    if (isRunning) teardownVpn()
+                    setupVpn()
+                }
+            }
+            return START_STICKY
         }
 
         if (!isRunning) {
             serviceScope.launch {
-                controlMutex.withLock {
-                    if (isRunning) return@withLock // a concurrent call already started us
+                runControlOp("start") {
+                    if (isRunning) return@runControlOp // a concurrent call already started us
                     setupVpn()
                 }
             }
@@ -630,17 +724,39 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     }
 
     private fun createNotification(): Notification {
+        val openAppIntent = PendingIntent.getActivity(
+            this,
+            0,
+            packageManager.getLaunchIntentForPackage(packageName)
+                ?: Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val disconnectIntent = PendingIntent.getService(
+            this,
+            1,
+            Intent(this, BigRocketVpnService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val resetIntent = PendingIntent.getService(
+            this,
+            2,
+            Intent(this, BigRocketVpnService::class.java).setAction(ACTION_RESET),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("BigRocket فعال است")
             .setContentText("مسیر هوشمند Wi-Fi و دیتای همراه در حال اجراست")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
+            .setContentIntent(openAppIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "قطع اتصال", disconnectIntent)
+            .addAction(android.R.drawable.ic_popup_sync, "ریست اتصال", resetIntent)
             .build()
     }
 
-    private fun stopVpn() {
-        AppLogger.log("VpnService", "stopVpn()")
+    private fun teardownVpn() {
+        AppLogger.log("VpnService", "teardownVpn()")
         isRunning = false
 
         weightUpdateJob?.cancel()
@@ -677,7 +793,10 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
 
         // Ensure Aether state is properly reset when VPN stops
         EmbeddedAetherRuntime.stop(applicationContext)
+    }
 
+    private fun stopVpn() {
+        teardownVpn()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
@@ -706,7 +825,7 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
      * already revoked the tunnel, leaving things out of sync until the process restarts.
      */
     override fun onRevoke() {
-        serviceScope.launch { controlMutex.withLock { stopVpn() } }
+        serviceScope.launch { runControlOp("stop-onRevoke") { stopVpn() } }
         super.onRevoke()
     }
 }
