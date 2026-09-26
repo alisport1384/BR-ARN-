@@ -15,6 +15,8 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.Process
 import com.bigrocket.ui.MainActivity
+import studio.cluvex.aether.core.AetherController
+import studio.cluvex.aether.model.ConnectionState
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -159,6 +161,7 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
         runningInstance = this
         createNotificationChannel()
         startControlOpWatchdog()
+        startNotificationStateSync()
 
         // Apply the active embedded proxy's readiness to the router the moment it changes,
         // instead of only picking it up on the next 4s weight-update tick - so app traffic
@@ -723,7 +726,7 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
         }
     }
 
-    private fun createNotification(): Notification {
+    private fun createNotification(state: ConnectionState = AetherController.state.value): Notification {
         val openAppIntent = PendingIntent.getActivity(
             this,
             0,
@@ -743,9 +746,10 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
             Intent(this, BigRocketVpnService::class.java).setAction(ACTION_RESET),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+        val (title, text) = notificationTextFor(state)
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("BigRocket فعال است")
-            .setContentText("مسیر هوشمند Wi-Fi و دیتای همراه در حال اجراست")
+            .setContentTitle(title)
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
@@ -753,6 +757,27 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "قطع اتصال", disconnectIntent)
             .addAction(android.R.drawable.ic_popup_sync, "ریست اتصال", resetIntent)
             .build()
+    }
+
+    private fun notificationTextFor(state: ConnectionState): Pair<String, String> = when (state) {
+        is ConnectionState.Idle -> "BigRocket" to "غیرفعال"
+        is ConnectionState.Launching -> "BigRocket" to "در حال راه‌اندازی..."
+        is ConnectionState.Connecting -> "BigRocket" to "در حال اتصال..."
+        is ConnectionState.Verifying -> "BigRocket" to "در حال بررسی اتصال..."
+        is ConnectionState.Connected -> "BigRocket متصل است" to "مسیر هوشمند Wi-Fi و دیتای همراه در حال اجراست"
+        is ConnectionState.Reconnecting -> "BigRocket" to "تلاش مجدد برای اتصال (${state.attempt}/${state.maxAttempts})"
+        is ConnectionState.Disconnecting -> "BigRocket" to "در حال قطع اتصال..."
+        is ConnectionState.Error -> "خطا در اتصال" to state.message
+    }
+
+    /** Keeps the persistent notification's title/text in sync with AetherController.state. */
+    private fun startNotificationStateSync() {
+        serviceScope.launch {
+            AetherController.state.collectLatest { state ->
+                val manager = getSystemService(NotificationManager::class.java)
+                manager?.notify(NOTIFICATION_ID, createNotification(state))
+            }
+        }
     }
 
     private fun teardownVpn() {
