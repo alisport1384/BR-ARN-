@@ -67,6 +67,29 @@ object AppLogger {
         }
     }
 
+    /**
+     * Same as [log], but writes to the file on the CALLING thread instead of queuing onto
+     * [writeExecutor]. Use this only for the handful of call sites right before the process
+     * might die without warning (onDestroy, onTaskRemoved, a watchdog about to call
+     * Process.killProcess) - for those, a queued async write can lose the exact line we need
+     * most if the process is gone before the executor gets to run it. Not for routine logging:
+     * this blocks the calling thread on disk I/O.
+     */
+    fun logCritical(tag: String, message: String) {
+        if (!enabled) return
+        val line = "${timestampFormat.format(java.util.Date())} [$tag] $message"
+        synchronized(memoryBuffer) {
+            memoryBuffer.addLast(line)
+            while (memoryBuffer.size > MAX_MEMORY_LINES) memoryBuffer.removeFirst()
+        }
+        logFile?.let { file ->
+            runCatching {
+                file.appendText(line + "\n")
+                rotateIfNeeded(file)
+            }
+        }
+    }
+
     /** Convenience for logging a caught exception without every call site formatting it by hand. */
     fun logError(tag: String, message: String, error: Throwable) {
         log(tag, "$message: ${error.javaClass.simpleName}: ${error.message}")
