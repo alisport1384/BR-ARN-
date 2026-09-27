@@ -157,7 +157,7 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     override fun onCreate() {
         super.onCreate()
         AppLogger.init(this)
-        AppLogger.log("VpnService", "onCreate()")
+        AppLogger.log("VpnService", "onCreate() pid=${Process.myPid()}")
         runningInstance = this
         createNotificationChannel()
         startControlOpWatchdog()
@@ -212,8 +212,10 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     private suspend fun runControlOp(label: String, block: suspend () -> Unit) {
         controlOpLabel = label
         controlOpStartedAt = System.currentTimeMillis()
+        AppLogger.log("VpnService", "runControlOp('$label') acquiring controlMutex")
         try {
             controlMutex.withLock { block() }
+            AppLogger.log("VpnService", "runControlOp('$label') completed in ${System.currentTimeMillis() - controlOpStartedAt}ms")
         } finally {
             controlOpStartedAt = 0L
         }
@@ -292,6 +294,11 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        AppLogger.log(
+            "VpnService",
+            "onStartCommand() action=${intent?.action ?: "null (system restart or sticky redelivery)"} " +
+                "flags=$flags startId=$startId isRunning=$isRunning pid=${Process.myPid()}",
+        )
         // This must be the very first thing that happens for every start, including a stop
         // request - Android starts its "did you call startForeground()" timer the moment
         // startForegroundService() was invoked, regardless of which action we were sent, and
@@ -832,10 +839,23 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     }
 
     override fun onDestroy() {
+        // logCritical, not log: onDestroy can be the last code that ever runs in this
+        // process - a queued async write could be lost if the process dies right after.
+        AppLogger.logCritical("VpnService", "onDestroy() called, pid=${Process.myPid()}")
         if (runningInstance === this) runningInstance = null
         stopVpn()
         serviceScope.cancel()
         super.onDestroy()
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // Fires when the user swipes the app away from Recents. With
+        // android:stopWithTask="false" this must NOT tear the VPN down - only logged here
+        // so an exported log can show definitively whether this fired, and whether
+        // onDestroy() followed it anyway (which would mean something is overriding the
+        // manifest flag, not that this callback itself killed anything).
+        AppLogger.logCritical("VpnService", "onTaskRemoved() called, pid=${Process.myPid()}, isRunning=$isRunning")
+        super.onTaskRemoved(rootIntent)
     }
 
     /** Sandbox-only accessors - see [runningInstance]. */
