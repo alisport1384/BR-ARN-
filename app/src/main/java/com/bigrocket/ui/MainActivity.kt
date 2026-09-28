@@ -260,6 +260,15 @@ class MainActivity : AppCompatActivity() {
 
         val options = arrayOf("فقط BigRocket", "BigRocket + Aether")
         spinnerAetherMode.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, options)
+        // A Spinner ALWAYS fires onItemSelected once after layout with whatever position is
+        // selected at that moment - it is not a user action. A fresh adapter defaults to
+        // position 0 ("BigRocket only" = NONE), so without pre-selecting the restored choice
+        // here that phantom callback called setUpstreamChoice(NONE): it overwrote the saved
+        // choice, showed "Direct", and stop()ped a healthy running Aether engine the moment
+        // the app was opened (connection alive until entering the app, dropped on entering).
+        // Selecting the restored position BEFORE attaching the listener makes that phantom
+        // callback a no-op (setUpstreamChoice returns early when the choice is unchanged).
+        spinnerAetherMode.setSelection(if (upstreamChoice == UpstreamChoice.AETHER) 1 else 0, false)
         spinnerAetherMode.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
             override fun onNothingSelected(parent: AdapterView<*>?) = Unit
             override fun onItemSelected(parent: AdapterView<*>?, view: android.view.View?, position: Int, id: Long) {
