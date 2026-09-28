@@ -49,6 +49,11 @@ enum class UpstreamChoice { NONE, AETHER }
 
 class MainActivity : AppCompatActivity() {
 
+    private companion object {
+        const val UPSTREAM_PREFS = "bigrocket_upstream"
+        const val KEY_UPSTREAM_CHOICE = "upstream_choice"
+    }
+
     private lateinit var tvWifiStatus: TextView
     private lateinit var tvCellularStatus: TextView
     private lateinit var tvPath3Status: TextView
@@ -116,6 +121,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         AppLogger.init(this)
+        // Restore the user's upstream choice BEFORE observeBondingStatus() can tick.
+        // upstreamChoice used to be pure in-memory state that reset to NONE on every fresh
+        // Activity instance (e.g. reopening from Recents), while the VPN service - now kept
+        // alive by stopWithTask=false - was still genuinely running Aether. The per-tick
+        // observer then saw "NONE but Aether is running" and called EmbeddedAetherRuntime.stop()
+        // on a healthy engine, which is what produced the repeated disconnect/reconnect.
+        // SharedPreferences (synchronous read) on purpose: an async DataStore read would
+        // reintroduce a window where the default is still visible.
+        upstreamChoice = loadUpstreamChoice()
         initViews()
         setSupportActionBar(toolbar)
         setupUpstreamIntegration()
@@ -268,6 +282,7 @@ class MainActivity : AppCompatActivity() {
         if (upstreamChoice == choice) return
         AppLogger.log("Upstream", "switching $upstreamChoice -> $choice")
         upstreamChoice = choice
+        saveUpstreamChoice(choice)
         renderUpstreamChoice()
 
         if (choice != UpstreamChoice.AETHER) EmbeddedAetherRuntime.stop(this)
@@ -278,6 +293,17 @@ class MainActivity : AppCompatActivity() {
             UpstreamChoice.AETHER -> EmbeddedAetherRuntime.start(this, aetherProfile)
             UpstreamChoice.NONE -> Unit
         }
+    }
+
+    private fun loadUpstreamChoice(): UpstreamChoice {
+        val name = getSharedPreferences(UPSTREAM_PREFS, MODE_PRIVATE).getString(KEY_UPSTREAM_CHOICE, null)
+        return runCatching { UpstreamChoice.valueOf(name ?: "") }.getOrDefault(UpstreamChoice.NONE)
+    }
+
+    private fun saveUpstreamChoice(choice: UpstreamChoice) {
+        getSharedPreferences(UPSTREAM_PREFS, MODE_PRIVATE).edit()
+            .putString(KEY_UPSTREAM_CHOICE, choice.name)
+            .apply()
     }
 
     private fun renderUpstreamChoice() {
@@ -340,10 +366,14 @@ class MainActivity : AppCompatActivity() {
                 isVpnRunning = state.isServiceActive
                 if (isVpnRunning) {
                     if (upstreamChoice == UpstreamChoice.AETHER && !EmbeddedAetherRuntime.isRunning()) {
+                        AppLogger.log("Upstream", "observer: service active + AETHER chosen but engine not running -> start()")
                         EmbeddedAetherRuntime.start(this@MainActivity, aetherProfile)
                     }
                 } else {
-                    if (EmbeddedAetherRuntime.isRunning()) EmbeddedAetherRuntime.stop(this@MainActivity)
+                    if (EmbeddedAetherRuntime.isRunning()) {
+                        AppLogger.log("Upstream", "observer: service NOT active but engine running -> stop()")
+                        EmbeddedAetherRuntime.stop(this@MainActivity)
+                    }
                 }
                 btnToggleVpn.text = if (isVpnRunning) "قطع اتصال BigRocket" else "شروع اتصال BigRocket"
                 tvVpnStatus.text = if (isVpnRunning) "وضعیت اتصال: VPN فعال" else "وضعیت اتصال: غیرفعال"
