@@ -25,6 +25,32 @@ object EmbeddedAetherRuntime {
     private var job: Job? = null
     private var process: AetherProcess? = null
 
+    private const val UPSTREAM_PREFS = "bigrocket_upstream"
+    private const val KEY_UPSTREAM_CHOICE = "upstream_choice"
+
+    /**
+     * Owned here, not in MainActivity: the Service must be able to read (and start/stop
+     * Aether from) this choice on its own, independent of whether any Activity currently
+     * exists - that is the whole point of this step (see learnings-and-working-style: engine
+     * lifecycle must be Service-owned, not Activity-owned, or a recreated/reopened Activity
+     * can race a healthy running engine - which is exactly what previously caused the
+     * reconnect flap on reopening the app).
+     */
+    enum class UpstreamChoice { NONE, AETHER }
+
+    /** Synchronous on purpose - see loadUpstreamChoice()'s callers for why. */
+    fun readUpstreamChoice(context: Context): UpstreamChoice {
+        val name = context.getSharedPreferences(UPSTREAM_PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_UPSTREAM_CHOICE, null)
+        return runCatching { UpstreamChoice.valueOf(name ?: "") }.getOrDefault(UpstreamChoice.NONE)
+    }
+
+    fun saveUpstreamChoice(context: Context, choice: UpstreamChoice) {
+        context.getSharedPreferences(UPSTREAM_PREFS, Context.MODE_PRIVATE).edit()
+            .putString(KEY_UPSTREAM_CHOICE, choice.name)
+            .apply()
+    }
+
     private val _enabled = MutableStateFlow(false)
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
 
