@@ -16,6 +16,8 @@ import android.os.PowerManager
 import android.os.Process
 import com.bigrocket.ui.MainActivity
 import studio.cluvex.aether.core.AetherController
+import studio.cluvex.aether.data.ProfileStore
+import studio.cluvex.aether.model.ConnectionProfile
 import studio.cluvex.aether.model.ConnectionState
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +30,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -51,6 +54,12 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
         // New: lets the notification (or anything outside the app) request a
         // stop+start cycle without the user having to open the app first.
         const val ACTION_RESET = "com.bigrocket.service.RESET"
+        // Sent by MainActivity right after it persists a new upstream choice, only when it
+        // knows the service is already alive (runningInstance != null) - so a live toggle
+        // takes effect immediately instead of waiting for the next full reconnect. The
+        // Service is still the one deciding what to actually do with it (see
+        // applyUpstreamChoice()); this intent only asks it to re-check.
+        const val ACTION_UPSTREAM_CHANGED = "com.bigrocket.service.UPSTREAM_CHANGED"
 
         // Watchdog: worst-case time we let a single controlMutex-guarded start/
         // stop/reset operation run before treating the process as unrecoverable.
@@ -101,6 +110,7 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     // dialed through BigRocket's weighted physical-path bonding first.
     private var bondingUpstream: BondingSocksServer? = null
     private val path3Router = Path3Router()
+    private val profileStore by lazy { ProfileStore(applicationContext) }
     private var networkMonitor: NetworkMonitor? = null
     private var wifiLock: WifiManager.WifiLock? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -328,6 +338,13 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
             return START_STICKY
         }
 
+        if (intent?.action == ACTION_UPSTREAM_CHANGED) {
+            if (isRunning) {
+                serviceScope.launch { runControlOp("upstream-changed") { applyUpstreamChoice() } }
+            }
+            return START_STICKY
+        }
+
         if (!isRunning) {
             serviceScope.launch {
                 runControlOp("start") {
@@ -497,9 +514,46 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
 
             TrafficStats.reset()
             startWeightUpdates()
+
+            // Engine lifecycle ownership lives here now, not in MainActivity - see
+            // ACTION_UPSTREAM_CHANGED and applyUpstreamChoice() below for why.
+            applyUpstreamChoice()
         } catch (e: Exception) {
             AppLogger.logError("VpnService", "setupVpn() failed, tearing down", e)
             stopVpn()
+        }
+    }
+
+    /**
+     * Starts or stops the Aether engine to match the persisted upstream choice. Called once
+     * at the end of a successful setupVpn(), and again whenever MainActivity sends
+     * ACTION_UPSTREAM_CHANGED after the user flips the choice while already connected.
+     *
+     * This used to be decided by MainActivity itself, on every ~1s BondingStatus tick,
+     * comparing its own in-memory (and, on a fresh Activity instance, briefly wrong -
+     * see loadUpstreamChoice()'s comment in MainActivity) upstreamChoice against
+     * EmbeddedAetherRuntime.isRunning(). A recreated Activity racing a healthy running
+     * engine is exactly what produced the reconnect flap on reopening the app. The engine
+     * is only ever meaningfully useful while the VPN itself is up, so the Service - which
+     * now outlives the Activity (stopWithTask="false") - is the only thing that should
+     * decide this.
+     */
+    private suspend fun applyUpstreamChoice() {
+        val choice = EmbeddedAetherRuntime.readUpstreamChoice(applicationContext)
+        when (choice) {
+            EmbeddedAetherRuntime.UpstreamChoice.AETHER -> {
+                if (!EmbeddedAetherRuntime.isRunning()) {
+                    val profile = profileStore.profile.first().copy(proxyMode = true)
+                    AppLogger.log("VpnService", "applyUpstreamChoice: starting Aether")
+                    EmbeddedAetherRuntime.start(applicationContext, profile)
+                }
+            }
+            EmbeddedAetherRuntime.UpstreamChoice.NONE -> {
+                if (EmbeddedAetherRuntime.isRunning()) {
+                    AppLogger.log("VpnService", "applyUpstreamChoice: stopping Aether")
+                    EmbeddedAetherRuntime.stop(applicationContext)
+                }
+            }
         }
     }
 
