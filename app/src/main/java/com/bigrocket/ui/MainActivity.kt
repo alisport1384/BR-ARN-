@@ -44,15 +44,13 @@ import com.bigrocket.service.BondingStatus
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-/** The three modes the app can run in - exactly one embedded upstream is ever active. */
-enum class UpstreamChoice { NONE, AETHER }
+/** The two modes the app can run in - exactly one embedded upstream is ever active.
+ *  Owned by EmbeddedAetherRuntime now (the Service needs it independent of any Activity);
+ *  kept as a typealias here so every existing UpstreamChoice.NONE/.AETHER call site below
+ *  keeps working unchanged. */
+typealias UpstreamChoice = EmbeddedAetherRuntime.UpstreamChoice
 
 class MainActivity : AppCompatActivity() {
-
-    private companion object {
-        const val UPSTREAM_PREFS = "bigrocket_upstream"
-        const val KEY_UPSTREAM_CHOICE = "upstream_choice"
-    }
 
     private lateinit var tvWifiStatus: TextView
     private lateinit var tvCellularStatus: TextView
@@ -294,26 +292,20 @@ class MainActivity : AppCompatActivity() {
         saveUpstreamChoice(choice)
         renderUpstreamChoice()
 
-        if (choice != UpstreamChoice.AETHER) EmbeddedAetherRuntime.stop(this)
-
-        val active = BondingStatus.state.value.isServiceActive
-        if (!active) return
-        when (choice) {
-            UpstreamChoice.AETHER -> EmbeddedAetherRuntime.start(this, aetherProfile)
-            UpstreamChoice.NONE -> Unit
+        // The Service owns the engine's actual start/stop now (see applyUpstreamChoice() in
+        // BigRocketVpnService) - this only wakes it up to re-check the choice we just saved,
+        // and only if it's actually alive; if it's not running yet, the choice will simply be
+        // picked up the next time setupVpn() runs.
+        if (BigRocketVpnService.runningInstance != null) {
+            startService(Intent(this, BigRocketVpnService::class.java).setAction(BigRocketVpnService.ACTION_UPSTREAM_CHANGED))
         }
     }
 
-    private fun loadUpstreamChoice(): UpstreamChoice {
-        val name = getSharedPreferences(UPSTREAM_PREFS, MODE_PRIVATE).getString(KEY_UPSTREAM_CHOICE, null)
-        return runCatching { UpstreamChoice.valueOf(name ?: "") }.getOrDefault(UpstreamChoice.NONE)
-    }
+    // Thin wrappers so existing call sites are unchanged - single source of truth is now
+    // EmbeddedAetherRuntime, which the Service reads independently of this Activity.
+    private fun loadUpstreamChoice(): UpstreamChoice = EmbeddedAetherRuntime.readUpstreamChoice(this)
 
-    private fun saveUpstreamChoice(choice: UpstreamChoice) {
-        getSharedPreferences(UPSTREAM_PREFS, MODE_PRIVATE).edit()
-            .putString(KEY_UPSTREAM_CHOICE, choice.name)
-            .apply()
-    }
+    private fun saveUpstreamChoice(choice: UpstreamChoice) = EmbeddedAetherRuntime.saveUpstreamChoice(this, choice)
 
     private fun renderUpstreamChoice() {
         tvAetherMode.text = when (upstreamChoice) {
@@ -373,17 +365,6 @@ class MainActivity : AppCompatActivity() {
                 tvSpeed.text = "سرعت ترکیبی: $displaySpeed Mbps"
 
                 isVpnRunning = state.isServiceActive
-                if (isVpnRunning) {
-                    if (upstreamChoice == UpstreamChoice.AETHER && !EmbeddedAetherRuntime.isRunning()) {
-                        AppLogger.log("Upstream", "observer: service active + AETHER chosen but engine not running -> start()")
-                        EmbeddedAetherRuntime.start(this@MainActivity, aetherProfile)
-                    }
-                } else {
-                    if (EmbeddedAetherRuntime.isRunning()) {
-                        AppLogger.log("Upstream", "observer: service NOT active but engine running -> stop()")
-                        EmbeddedAetherRuntime.stop(this@MainActivity)
-                    }
-                }
                 btnToggleVpn.text = if (isVpnRunning) "قطع اتصال BigRocket" else "شروع اتصال BigRocket"
                 tvVpnStatus.text = if (isVpnRunning) "وضعیت اتصال: VPN فعال" else "وضعیت اتصال: غیرفعال"
                 tvBarLegend.text = "Wi-Fi ${state.wifiWeight}% · Cellular ${state.cellularWeight}%"
@@ -494,7 +475,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopVpnService() {
         AppLogger.log("VPN", "stopVpnService() called")
-        EmbeddedAetherRuntime.stop(this)
+        // teardownVpn() in BigRocketVpnService already stops the Aether engine as part of
+        // full VPN teardown - no need (and no longer safe, per applyUpstreamChoice()'s
+        // ownership rule) to also stop it here.
         val intent = Intent(this, BigRocketVpnService::class.java).apply {
             action = BigRocketVpnService.ACTION_STOP
         }
