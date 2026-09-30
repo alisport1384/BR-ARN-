@@ -35,6 +35,12 @@ class TunPacketRouter(
     // deterministically biased the same way every single session.
     private val packetCounter = AtomicInteger(kotlin.random.Random.nextInt(100))
 
+    // Everything below that needs "a Network for this packet" goes through this interface,
+    // not path3Router directly - see PathSelector for why. updateNetworks()/updateWeights()
+    // below still talk to path3Router directly: those are Path Manager configuration calls,
+    // a different concern from stream-layer packet routing, and out of scope for this step.
+    private val pathSelector: PathSelector = path3Router
+
     private val sessionTracker = NetworkSessionTracker()
     private val udpRelayEngine = UdpRelayEngine(vpnService)
     private val tcpRelayEngine = TcpRelayEngine(vpnService)
@@ -172,7 +178,7 @@ class TunPacketRouter(
         }
     }
 
-    private fun selectNetworkForPacket(): Network? = path3Router.selectNetwork(packetCounter.getAndIncrement())
+    private fun selectNetworkForPacket(): Network? = pathSelector.selectNetwork(packetCounter.getAndIncrement())
 
     fun stop() {
         isRunning = false
