@@ -716,6 +716,11 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
                     val reset = DynamicWeightCalculator.resetForPathRecovery(
                         recoveredWifi = (!previousWifiOk && wifiOk)
                     )
+                    // Was previously only reaching path3Router as a side effect of
+                    // TunPacketRouter.updateWeights() forwarding to it internally; now that
+                    // forwarding is gone (see TunPacketRouter's PathSelector split), path3Router
+                    // needs this call directly like the other two already get it.
+                    path3Router.updateWeights(reset.wifiWeight, reset.cellularWeight)
                     packetRouter?.updateWeights(reset.wifiWeight, reset.cellularWeight)
                     bondingUpstream?.updateWeights(reset.wifiWeight, reset.cellularWeight)
                 }
