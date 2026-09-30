@@ -36,9 +36,10 @@ class TunPacketRouter(
     private val packetCounter = AtomicInteger(kotlin.random.Random.nextInt(100))
 
     // Everything below that needs "a Network for this packet" goes through this interface,
-    // not path3Router directly - see PathSelector for why. updateNetworks()/updateWeights()
-    // below still talk to path3Router directly: those are Path Manager configuration calls,
-    // a different concern from stream-layer packet routing, and out of scope for this step.
+    // not path3Router directly - see PathSelector for why. path3Router itself is kept only
+    // to build this; updateNetworks()/updateWeights() below no longer forward to it - that's
+    // Path Manager configuration, and BigRocketVpnService now calls path3Router directly for
+    // it, in parallel with calling this class.
     private val pathSelector: PathSelector = path3Router
 
     private val sessionTracker = NetworkSessionTracker()
@@ -53,7 +54,9 @@ class TunPacketRouter(
 
         this.wifiNetwork = wifi
         this.cellularNetwork = cellular
-        path3Router.updateNetworks(wifi, cellular)
+        // Path Manager configuration, not stream-layer concern - BigRocketVpnService calls
+        // path3Router.updateNetworks() directly itself alongside this method; this class only
+        // needs wifi/cellular for the session-migration work below, which IS its own concern.
 
         if (oldWifi != null && wifi == null) {
             notifyNetworkLost(oldWifi)
@@ -104,7 +107,9 @@ class TunPacketRouter(
         val changed = this.wifiWeight != wifiW || this.cellularWeight != cellularW
         this.wifiWeight = wifiW
         this.cellularWeight = cellularW
-        path3Router.updateWeights(wifiW, cellularW)
+        // Path Manager configuration, not stream-layer concern - BigRocketVpnService calls
+        // path3Router.updateWeights() directly itself alongside this method; this class only
+        // needs the weights for its own packetCounter reset below.
         if (changed) packetCounter.set(kotlin.random.Random.nextInt(100))
     }
 
