@@ -9,7 +9,7 @@ import android.net.Network
  * for the physical Network to use for a new flow. Aether's SOCKS input and
  * BigRocket's direct router both use this same selector.
  */
-class Path3Router {
+class Path3Router : PathSelector {
     @Volatile private var wifiNetwork: Network? = null
     @Volatile private var cellularNetwork: Network? = null
     @Volatile private var wifiWeight = 50
@@ -30,7 +30,7 @@ class Path3Router {
         AppLogger.log("Path3", "updateWeights wifi=$wifiWeight cellular=$cellularWeight")
     }
 
-    fun selectNetwork(slot: Int? = null): Network? {
+    override fun selectNetwork(slot: Int?): Network? {
         val wifi = wifiNetwork
         val cellular = cellularNetwork
         if (wifi != null && cellular != null) {
