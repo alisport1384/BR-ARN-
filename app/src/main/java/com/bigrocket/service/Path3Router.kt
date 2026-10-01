@@ -15,9 +15,16 @@ class Path3Router : PathSelector {
     @Volatile private var wifiWeight = 50
     @Volatile private var cellularWeight = 50
 
+    // selectNetwork() is called per-packet/per-flow (can be thousands of times a second) -
+    // logging every call would flood the log and add real I/O cost. Logging only the flips
+    // (which physical path a new selection actually lands on) gives the same verification
+    // value - "is Path 3 actually alternating/favoring the path I expect" - at negligible cost.
+    @Volatile private var lastSelectedWasWifi: Boolean? = null
+
     fun updateNetworks(wifi: Network?, cellular: Network?) {
         wifiNetwork = wifi
         cellularNetwork = cellular
+        AppLogger.log("Path3", "updateNetworks wifi=$wifi cellular=$cellular")
     }
 
     /** Read-only snapshot for external observers (e.g. the Virtual Bonding sandbox UI). */
@@ -33,18 +40,30 @@ class Path3Router : PathSelector {
     override fun selectNetwork(slot: Int?): Network? {
         val wifi = wifiNetwork
         val cellular = cellularNetwork
-        if (wifi != null && cellular != null) {
+        val selected = if (wifi != null && cellular != null) {
             if (slot != null) {
                 val normalized = Math.floorMod(slot, 100)
-                return if (normalized < wifiWeight) wifi else cellular
+                if (normalized < wifiWeight) wifi else cellular
+            } else {
+                when {
+                    wifiWeight > cellularWeight -> wifi
+                    cellularWeight > wifiWeight -> cellular
+                    else -> wifi
+                }
             }
-            return when {
-                wifiWeight > cellularWeight -> wifi
-                cellularWeight > wifiWeight -> cellular
-                else -> wifi
-            }
+        } else {
+            wifi ?: cellular
         }
-        return wifi ?: cellular
+        logIfFlipped(selected, wifi)
+        return selected
+    }
+
+    private fun logIfFlipped(selected: Network?, wifi: Network?) {
+        val nowWifi = selected != null && selected == wifi
+        if (selected != null && lastSelectedWasWifi != nowWifi) {
+            lastSelectedWasWifi = nowWifi
+            AppLogger.log("Path3", "selectNetwork flipped to ${if (nowWifi) "wifi" else "cellular"} (wifi=$wifiWeight cellular=$cellularWeight)")
+        }
     }
 
     /**
