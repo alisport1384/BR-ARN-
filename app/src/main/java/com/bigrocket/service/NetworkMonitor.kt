@@ -48,10 +48,12 @@ class NetworkMonitor(
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
+            AppLogger.log("NetworkMonitor", "onAvailable $network")
             refreshNetwork(network)
         }
 
         override fun onLost(network: Network) {
+            AppLogger.log("NetworkMonitor", "onLost $network (was wifi=${network == wifiNetwork} cellular=${network == cellularNetwork})")
             if (network == wifiNetwork) wifiNetwork = null
             if (network == cellularNetwork) cellularNetwork = null
             refreshAllPhysicalNetworks(notify = true)
@@ -109,17 +111,54 @@ class NetworkMonitor(
     }
 
     fun startMonitoring() {
-        // Observe physical transports, not only networks that Android currently considers
-        // validated. This remains stable while a VPN is being established and during handoff.
-        val request = NetworkRequest.Builder()
+        // requestNetwork(), not registerNetworkCallback(): the latter only observes networks
+        // that happen to be up for some other reason. On a lot of devices Android will let
+        // the cellular radio drop to a low-power/idle state once Wi-Fi is the default network,
+        // unless something actively asks to keep it reachable - requestNetwork() is the
+        // documented way to do that, and is exactly what we found Hexa Software's NetCombiner
+        // does (two separate per-transport requestNetwork() calls - see
+        // NetCombiner-Research-FA.md section 3, "NetworkListener.requestNetwork()"). A single
+        // combined request can't express "I want both, even if one isn't the current default",
+        // so this is two requests, each pinned to one transport, sharing the same callback
+        // (unregisterNetworkCallback(networkCallback) below tears down both at once since
+        // they're registered against the same callback instance).
+        //
+        // Trade-off, not a bug: keeping the cellular radio actively reachable costs a bit more
+        // battery than letting it idle - that cost is inherent to what this fix buys back
+        // (P2 actually being ready when a packet needs it, not waking up on demand).
+        val wifiRequest = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .build()
+        val cellularRequest = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
             .build()
 
         try {
-            connectivityManager.registerNetworkCallback(request, networkCallback)
-        } catch (_: Exception) {
-            return
+            connectivityManager.requestNetwork(wifiRequest, networkCallback)
+            connectivityManager.requestNetwork(cellularRequest, networkCallback)
+            AppLogger.log("NetworkMonitor", "requestNetwork() registered for wifi + cellular")
+        } catch (e: Exception) {
+            // Most likely SecurityException (missing permission) or the system-wide
+            // outstanding-request quota - fall back to passive observation rather than have
+            // no network visibility at all.
+            AppLogger.logError(
+                "NetworkMonitor",
+                "requestNetwork() failed, falling back to registerNetworkCallback()",
+                e,
+            )
+            val fallback = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build()
+            try {
+                connectivityManager.registerNetworkCallback(fallback, networkCallback)
+            } catch (_: Exception) {
+                return
+            }
         }
 
         refreshAllPhysicalNetworks(notify = true)
