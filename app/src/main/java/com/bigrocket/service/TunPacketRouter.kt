@@ -59,11 +59,13 @@ class TunPacketRouter(
         // needs wifi/cellular for the session-migration work below, which IS its own concern.
 
         if (oldWifi != null && wifi == null) {
+            AppLogger.log("TunPacketRouter", "wifi lost, migrating sessions to cellular=$cellular")
             notifyNetworkLost(oldWifi)
             if (cellular != null) sessionTracker.migrateSessionsFromLostNetwork(oldWifi, cellular)
         }
 
         if (oldCellular != null && cellular == null) {
+            AppLogger.log("TunPacketRouter", "cellular lost, migrating sessions to wifi=$wifi")
             notifyNetworkLost(oldCellular)
             if (wifi != null) sessionTracker.migrateSessionsFromLostNetwork(oldCellular, wifi)
         }
@@ -97,6 +99,7 @@ class TunPacketRouter(
      * evicted twice, and so recovered-then-flaky paths aren't churned every cycle.
      */
     fun notifySoftFailure(failedNetwork: Network, fallbackNetwork: Network?) {
+        AppLogger.log("TunPacketRouter", "soft failure on $failedNetwork, evicting sessions, fallback=$fallbackNetwork")
         notifyNetworkLost(failedNetwork)
         if (fallbackNetwork != null) {
             sessionTracker.migrateSessionsFromLostNetwork(failedNetwork, fallbackNetwork)
