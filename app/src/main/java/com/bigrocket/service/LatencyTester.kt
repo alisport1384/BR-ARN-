@@ -3,6 +3,10 @@ package com.bigrocket.service
 import android.net.Network
 import java.net.InetSocketAddress
 import java.net.Socket
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 
 object LatencyTester {
 
@@ -31,5 +35,34 @@ object LatencyTester {
         } catch (_: Exception) {
             FAILURE
         }
+    }
+
+    /**
+     * Fraction of [probeCount] independent TCP connects that fail, run concurrently (not
+     * sequentially - probeCount connects back to back would multiply wall time and defeat the
+     * point of a "quick" loss check). A single testLatency() call only tells you "did the path
+     * work right now"; this tells you how CONSISTENTLY it works, which testLatency() cannot -
+     * a path that succeeds 7/10 rapid connects is meaningfully worse than one that succeeds
+     * 10/10, even if both show similar latency on the connects that do succeed.
+     *
+     * Deliberately NOT called every weight-update tick (see BigRocketVpnService's separate,
+     * much slower loss-probe loop) - probeCount connects per call is real socket/battery/data
+     * cost, cheap once every ~20s, not something to pay every 1s.
+     */
+    suspend fun testLossRate(
+        vpnService: BigRocketVpnService,
+        network: Network,
+        targetHost: String = "1.1.1.1",
+        port: Int = 443,
+        timeoutMs: Int = 800,
+        probeCount: Int = 8,
+    ): Double = coroutineScope {
+        val results = (1..probeCount).map {
+            async(Dispatchers.IO) {
+                testLatency(vpnService, network, targetHost, port, timeoutMs) != FAILURE
+            }
+        }.awaitAll()
+        val failures = results.count { !it }
+        failures.toDouble() / probeCount
     }
 }
