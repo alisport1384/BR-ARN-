@@ -147,17 +147,34 @@ object DynamicWeightCalculator {
         return selected == normalized
     }
 
+    // Last loss rates passed to update(), kept only for the log line - updateInternal() reads
+    // its own parameters directly, this is purely so the log shows what drove a given result.
+    @Volatile private var lastWifiLossRate = 0.0
+    @Volatile private var lastCellularLossRate = 0.0
+
     @Synchronized
     fun update(
         wifiAvailable: Boolean,
         wifiLatency: Long,
         cellularAvailable: Boolean,
-        cellularLatency: Long
+        cellularLatency: Long,
+        // Fraction 0.0-1.0, from LatencyTester.testLossRate() - measured far less often than
+        // latency (see that function's doc comment), so this holds its last known value
+        // between measurements rather than a fresh one every call. Default 0.0 so callers
+        // that haven't measured loss yet (or don't need to - e.g. the single-path branch in
+        // BigRocketVpnService, where loss on the only available path can't change the 100/0
+        // split anyway) are unaffected.
+        wifiLossRate: Double = 0.0,
+        cellularLossRate: Double = 0.0,
     ): NetworkWeights {
-        val result = updateInternal(wifiAvailable, wifiLatency, cellularAvailable, cellularLatency)
+        lastWifiLossRate = wifiLossRate
+        lastCellularLossRate = cellularLossRate
+        val result = updateInternal(wifiAvailable, wifiLatency, cellularAvailable, cellularLatency, wifiLossRate, cellularLossRate)
         AppLogger.log(
             "Weights",
-            "update(wifiAvail=$wifiAvailable wifiLatency=$wifiLatency cellAvail=$cellularAvailable cellLatency=$cellularLatency userScores=$wifiUserScore/$cellularUserScore) -> $result",
+            "update(wifiAvail=$wifiAvailable wifiLatency=$wifiLatency wifiLoss=$wifiLossRate " +
+                "cellAvail=$cellularAvailable cellLatency=$cellularLatency cellLoss=$cellularLossRate " +
+                "userScores=$wifiUserScore/$cellularUserScore) -> $result",
         )
         return result
     }
@@ -166,7 +183,9 @@ object DynamicWeightCalculator {
         wifiAvailable: Boolean,
         wifiLatency: Long,
         cellularAvailable: Boolean,
-        cellularLatency: Long
+        cellularLatency: Long,
+        wifiLossRate: Double,
+        cellularLossRate: Double,
     ): NetworkWeights {
         if (!wifiAvailable && !cellularAvailable) {
             clear()
@@ -213,8 +232,17 @@ object DynamicWeightCalculator {
         val cellularMedian = median(cellularLatencies)
         val wifiStability = medianAbsoluteDeviation(wifiLatencies, wifiMedian)
         val cellularStability = medianAbsoluteDeviation(cellularLatencies, cellularMedian)
-        val wifiCost = (wifiMedian + wifiStability * 2L).coerceAtLeast(1L)
-        val cellularCost = (cellularMedian + cellularStability * 2L).coerceAtLeast(1L)
+        // Goodput-style loss penalty: dividing by (1 - loss) is the standard way to express
+        // "X% of attempts are wasted, so the effective cost of getting data through rises by
+        // roughly that factor" - 0% loss leaves cost unchanged, 50% loss doubles it, and loss
+        // approaching 1.0 drives cost towards the floor below rather than a crash or a
+        // negative/zero divisor. Same units (cost, not a separate 0-100 score) as the
+        // latency+jitter term below, so this blends into the one ranking instead of competing
+        // with it as a second, uncoordinated decision.
+        val wifiLossDivisor = (1.0 - wifiLossRate).coerceAtLeast(0.05)
+        val cellularLossDivisor = (1.0 - cellularLossRate).coerceAtLeast(0.05)
+        val wifiCost = (((wifiMedian + wifiStability * 2L) / wifiLossDivisor).toLong()).coerceAtLeast(1L)
+        val cellularCost = (((cellularMedian + cellularStability * 2L) / cellularLossDivisor).toLong()).coerceAtLeast(1L)
 
         val wifiBetter = wifiCost.toDouble() * ADVANTAGE_RATIO < cellularCost.toDouble()
         val cellularBetter = cellularCost.toDouble() * ADVANTAGE_RATIO < wifiCost.toDouble()
