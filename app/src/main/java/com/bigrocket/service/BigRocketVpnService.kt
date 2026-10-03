@@ -15,6 +15,7 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.Process
 import com.bigrocket.ui.MainActivity
+import com.bigrocket.bonding.sandbox.VirtualBondingSandbox
 import studio.cluvex.aether.core.AetherController
 import studio.cluvex.aether.data.ProfileStore
 import studio.cluvex.aether.model.ConnectionProfile
@@ -82,6 +83,18 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "bigrocket_vpn_channel"
         private const val WEIGHT_UPDATE_INTERVAL_MS = 1000L
+        // Deliberately much slower than WEIGHT_UPDATE_INTERVAL_MS - each cycle opens
+        // LatencyTester.testLossRate()'s probeCount (default 8) sockets per path; doing that
+        // every 1s like the latency probe would be real, continuous socket/battery/data cost
+        // for a signal that doesn't need second-by-second freshness the way latency/failover
+        // detection does.
+        private const val LOSS_PROBE_INTERVAL_MS = 20_000L
+        // Confirms the bonding MECHANISM (frame split/merge/reassembly) still works, not that
+        // real P1/P2 paths are currently good - see BondingEngine's HEARTBEAT needing a real
+        // peer we don't have, in startPeriodicSandboxCheck()'s doc comment. Infrequent on
+        // purpose: this is a regression alarm for the bonding code itself, not a live signal
+        // anything currently acts on.
+        private const val SANDBOX_CHECK_INTERVAL_MS = 5 * 60_000L
         // Refreshed every weight-update cycle (well under this), so it never actually expires
         // during normal operation - this is only a safety net against a stuck/leaked lock.
         private const val WAKE_LOCK_TIMEOUT_MS = 30_000L
@@ -127,6 +140,13 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
     // risk for anything else launched on it in the future.
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var weightUpdateJob: Job? = null
+    // Separate, much slower loop (see startLossProbing()): measured far less often than
+    // latency, so the 1s weight-update loop reads these cached values rather than
+    // re-measuring loss on every tick - see LatencyTester.testLossRate()'s doc comment for why.
+    private var lossProbeJob: Job? = null
+    @Volatile private var wifiLossRate = 0.0
+    @Volatile private var cellularLossRate = 0.0
+    private var sandboxCheckJob: Job? = null
     // Last-known probe result per path, so the weight-update loop below can detect a
     // soft failure (ACTIVE/DEGRADED -> DISCONNECTED while Android still reports the network
     // as up) and evict pinned sessions immediately - see TunPacketRouter.notifySoftFailure.
@@ -514,6 +534,8 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
 
             TrafficStats.reset()
             startWeightUpdates()
+            startLossProbing()
+            startPeriodicSandboxCheck()
 
             // Engine lifecycle ownership lives here now, not in MainActivity - see
             // ACTION_UPSTREAM_CHANGED and applyUpstreamChoice() below for why.
@@ -729,7 +751,9 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
                     wifiAvailable = wifiOk,
                     wifiLatency = effectiveWifiLatency.coerceAtLeast(1),
                     cellularAvailable = cellularOk,
-                    cellularLatency = effectiveCellularLatency.coerceAtLeast(1)
+                    cellularLatency = effectiveCellularLatency.coerceAtLeast(1),
+                    wifiLossRate = wifiLossRate,
+                    cellularLossRate = cellularLossRate,
                 )
 
                 path3Router.updateWeights(weights.wifiWeight, weights.cellularWeight)
@@ -776,6 +800,74 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
                 )
 
                 delay(WEIGHT_UPDATE_INTERVAL_MS)
+            }
+        }
+    }
+
+    /**
+     * Real packet-loss measurement over the real internet, independent of BondingEngineImpl
+     * (which would need a responding peer we don't have without a VPS - see
+     * LatencyTester.testLossRate()'s doc comment for the full reasoning). Feeds
+     * wifiLossRate/cellularLossRate, which startWeightUpdates()'s loop reads every tick but
+     * only this loop ever writes.
+     */
+    private fun startLossProbing() {
+        lossProbeJob?.cancel()
+        lossProbeJob = serviceScope.launch {
+            while (isActive && isRunning) {
+                delay(LOSS_PROBE_INTERVAL_MS)
+                val wifi = wifiNetwork
+                val cellular = cellularNetwork
+                coroutineScope {
+                    val wifiDeferred = wifi?.let { async(Dispatchers.IO) { LatencyTester.testLossRate(this@BigRocketVpnService, it) } }
+                    val cellularDeferred = cellular?.let { async(Dispatchers.IO) { LatencyTester.testLossRate(this@BigRocketVpnService, it) } }
+                    wifiDeferred?.await()?.let { wifiLossRate = it }
+                    cellularDeferred?.await()?.let { cellularLossRate = it }
+                }
+                AppLogger.log("LossProbe", "wifiLossRate=$wifiLossRate cellularLossRate=$cellularLossRate")
+            }
+        }
+    }
+
+    /**
+     * Periodic regression alarm for the bonding frame split/merge/reassembly machinery
+     * itself (VirtualBondingSandbox, loopback-based - see its own docs on why it cannot
+     * measure real P1/P2 path quality without a VPS: BondingEngine's HEARTBEAT needs a real
+     * peer to answer it, same constraint as real traffic bonding). Purely diagnostic: the
+     * result is logged, never fed into DynamicWeightCalculator or any routing decision -
+     * "the bonding code still works" and "P1/P2 are currently good" are different questions,
+     * and this only answers the first one.
+     */
+    private fun startPeriodicSandboxCheck() {
+        sandboxCheckJob?.cancel()
+        sandboxCheckJob = serviceScope.launch {
+            while (isActive && isRunning) {
+                delay(SANDBOX_CHECK_INTERVAL_MS)
+                val wifi = wifiNetwork
+                val cellular = cellularNetwork
+                if (wifi == null || cellular == null) {
+                    AppLogger.log("BondingSelfCheck", "skipped, need both paths up (wifi=$wifi cellular=$cellular)")
+                    continue
+                }
+                try {
+                    val report = VirtualBondingSandbox.run(this@BigRocketVpnService, wifi, cellular)
+                    AppLogger.log(
+                        "BondingSelfCheck",
+                        "success=${report.success} integrityMatch=${report.integrityMatch} " +
+                            "p1TxBytes=${report.counters.p1TxBytes} p2TxBytes=${report.counters.p2TxBytes} " +
+                            "p3TxBytes=${report.counters.p3TxBytes} elapsedMs=${report.elapsedMs}",
+                    )
+                    if (!report.success || !report.integrityMatch) {
+                        AppLogger.logError(
+                            "BondingSelfCheck",
+                            "bonding mechanism self-check FAILED - software regression signal, " +
+                                "not a real-path-quality signal",
+                            IllegalStateException("success=${report.success} integrityMatch=${report.integrityMatch}"),
+                        )
+                    }
+                } catch (e: Exception) {
+                    AppLogger.logError("BondingSelfCheck", "threw", e)
+                }
             }
         }
     }
@@ -852,6 +944,12 @@ class BigRocketVpnService : VpnService(), NetworkMonitor.NetworkStateListener {
 
         weightUpdateJob?.cancel()
         weightUpdateJob = null
+        lossProbeJob?.cancel()
+        lossProbeJob = null
+        wifiLossRate = 0.0
+        cellularLossRate = 0.0
+        sandboxCheckJob?.cancel()
+        sandboxCheckJob = null
 
         networkMonitor?.stopMonitoring()
         networkMonitor = null
